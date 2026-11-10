@@ -10,6 +10,7 @@ import (
  "fmt"
  "log"
  "net/http"
+ "net/url"
  "os"
  "strings"
  "time"
@@ -33,6 +34,25 @@ func accepts(h,media string) bool {
  return false
 }
 func handler(token string) http.Handler {
+ return handlerWithOAuthMetadata(token, "", "")
+}
+
+// Discovery only: OAuth token validation is not implemented.
+func handlerWithOAuthMetadata(token, resource, issuer string) http.Handler {
+ metadataEnabled := validHTTPS(resource) && validHTTPS(issuer)
+ return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+  if r.URL.Path=="/.well-known/oauth-protected-resource" {
+   if !metadataEnabled {http.NotFound(w,r);return}
+   if r.Method!=http.MethodGet {w.Header().Set("Allow","GET");http.Error(w,"method not allowed",405);return}
+   w.Header().Set("Content-Type","application/json")
+   w.Header().Set("Cache-Control","no-store")
+   _=json.NewEncoder(w).Encode(map[string]any{
+    "resource":resource,
+    "authorization_servers":[]string{issuer},
+    "bearer_methods_supported":[]string{"header"},
+   })
+   return
+  }
  return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if r.URL.Path!="/mcp" {http.NotFound(w,r);return}
   w.Header().Set("Cache-Control","no-store")
@@ -40,7 +60,9 @@ func handler(token string) http.Handler {
   if r.Header.Get("Origin")!="" {http.Error(w,"browser origins not allowed",http.StatusForbidden);return}
   expected:="Bearer "+token
   if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")),[]byte(expected))!=1 {
-   w.Header().Set("WWW-Authenticate","Bearer")
+   challenge := "Bearer"
+   if metadataEnabled {challenge = fmt.Sprintf("Bearer resource_metadata=%q", strings.TrimRight(resource,"/")+"/.well-known/oauth-protected-resource")}
+   w.Header().Set("WWW-Authenticate",challenge)
    http.Error(w,"unauthorized",http.StatusUnauthorized);return
   }
   if r.Method!=http.MethodPost {
@@ -92,12 +114,16 @@ func handler(token string) http.Handler {
   _=json.NewEncoder(w).Encode(response)
  })
 }
+func validHTTPS(raw string) bool {
+ u,err:=url.Parse(raw)
+ return err==nil && u.Scheme=="https" && u.Host!="" && u.User==nil && u.RawQuery=="" && u.Fragment=="" && u.Path==""
+}
 func main(){
  address:=flag.String("listen","127.0.0.1:8787","HTTP listen address (TLS reverse proxy required for remote access)")
  flag.Parse()
  token:=strings.TrimSpace(os.Getenv("PLOOS_MCP_BEARER_TOKEN"))
  if len(token)<32 {log.Fatal("PLOOS_MCP_BEARER_TOKEN must contain at least 32 characters")}
- srv:=&http.Server{Addr:*address,Handler:handler(token),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
+ srv:=&http.Server{Addr:*address,Handler:handlerWithOAuthMetadata(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER"))),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
  fmt.Fprintf(os.Stderr,"stateless diagnostic MCP HTTP listening on %s\n",*address)
  log.Fatal(srv.ListenAndServe())
 }
