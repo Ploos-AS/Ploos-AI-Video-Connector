@@ -53,7 +53,6 @@ func handlerWithOAuthMetadata(token, resource, issuer string) http.Handler {
    })
    return
   }
- return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if r.URL.Path!="/mcp" {http.NotFound(w,r);return}
   w.Header().Set("Cache-Control","no-store")
   // Do not allow cross-origin browser requests; non-browser MCP clients omit Origin.
