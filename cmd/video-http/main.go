@@ -39,6 +39,9 @@ func handler(token string) http.Handler {
 
 // Discovery only: OAuth token validation is not implemented.
 func handlerWithOAuthMetadata(token, resource, issuer string) http.Handler {
+ return handlerWithValidator(token, resource, issuer, nil)
+}
+func handlerWithValidator(token, resource, issuer string, validator *introspector) http.Handler {
  metadataEnabled := validHTTPS(resource) && validHTTPS(issuer)
  return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if r.URL.Path=="/.well-known/oauth-protected-resource" {
@@ -57,8 +60,17 @@ func handlerWithOAuthMetadata(token, resource, issuer string) http.Handler {
   w.Header().Set("Cache-Control","no-store")
   // Do not allow cross-origin browser requests; non-browser MCP clients omit Origin.
   if r.Header.Get("Origin")!="" {http.Error(w,"browser origins not allowed",http.StatusForbidden);return}
-  expected:="Bearer "+token
-  if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")),[]byte(expected))!=1 {
+  authorization:=r.Header.Get("Authorization")
+  authorized:=false
+  if validator!=nil {
+   if strings.HasPrefix(authorization,"Bearer ") {
+    authorized=validator.validate(r.Context(),strings.TrimPrefix(authorization,"Bearer "))==nil
+   }
+  } else {
+   expected:="Bearer "+token
+   authorized=subtle.ConstantTimeCompare([]byte(authorization),[]byte(expected))==1
+  }
+  if !authorized {
    challenge := "Bearer"
    if metadataEnabled {challenge = fmt.Sprintf("Bearer resource_metadata=%q", strings.TrimRight(resource,"/")+"/.well-known/oauth-protected-resource")}
    w.Header().Set("WWW-Authenticate",challenge)
@@ -121,8 +133,13 @@ func main(){
  address:=flag.String("listen","127.0.0.1:8787","HTTP listen address (TLS reverse proxy required for remote access)")
  flag.Parse()
  token:=strings.TrimSpace(os.Getenv("PLOOS_MCP_BEARER_TOKEN"))
- if len(token)<32 {log.Fatal("PLOOS_MCP_BEARER_TOKEN must contain at least 32 characters")}
- srv:=&http.Server{Addr:*address,Handler:handlerWithOAuthMetadata(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER"))),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
+ var validator *introspector
+ if endpoint:=strings.TrimSpace(os.Getenv("PLOOS_OAUTH_INTROSPECTION_URL"));endpoint!="" {
+  var err error
+  validator,err=newIntrospector(endpoint,os.Getenv("PLOOS_OAUTH_CLIENT_ID"),os.Getenv("PLOOS_OAUTH_CLIENT_SECRET"),os.Getenv("PLOOS_OAUTH_ISSUER"),os.Getenv("PLOOS_MCP_PUBLIC_URL"),os.Getenv("PLOOS_OAUTH_REQUIRED_SCOPE"))
+  if err!=nil {log.Fatal(err)}
+ } else if len(token)<32 {log.Fatal("PLOOS_MCP_BEARER_TOKEN must contain at least 32 characters")}
+ srv:=&http.Server{Addr:*address,Handler:handlerWithValidator(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
  fmt.Fprintf(os.Stderr,"stateless diagnostic MCP HTTP listening on %s\n",*address)
  log.Fatal(srv.ListenAndServe())
 }
