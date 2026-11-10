@@ -55,3 +55,22 @@ func TestNegotiation(t *testing.T){
   })
  }
 }
+
+func TestOAuthDiscoveryOptIn(t *testing.T){
+ token:=strings.Repeat("x",40)
+ path:="/.well-known/oauth-protected-resource"
+ req:=httptest.NewRequest("GET",path,nil)
+ w:=httptest.NewRecorder()
+ handler(token).ServeHTTP(w,req)
+ if w.Code!=404 {t.Fatalf("metadata enabled by default: %d",w.Code)}
+ h:=handlerWithOAuthMetadata(token,"https://video.example","https://auth.example")
+ w=httptest.NewRecorder();h.ServeHTTP(w,req)
+ if w.Code!=200 || !strings.Contains(w.Body.String(),"authorization_servers") {t.Fatalf("metadata: %d %s",w.Code,w.Body.String())}
+ unauthorized:=request("POST",`{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+ unauthorized.Header.Del("Authorization")
+ w=httptest.NewRecorder();h.ServeHTTP(w,unauthorized)
+ if w.Code!=401 || !strings.Contains(w.Header().Get("WWW-Authenticate"),"resource_metadata") {t.Fatalf("challenge: %d %s",w.Code,w.Header().Get("WWW-Authenticate"))}
+}
+func TestRejectInsecureOAuthMetadata(t *testing.T){
+ if validHTTPS("http://auth.example") || validHTTPS("https://user:pass@auth.example") || validHTTPS("https://auth.example?x=1") {t.Fatal("accepted unsafe metadata URL")}
+}
