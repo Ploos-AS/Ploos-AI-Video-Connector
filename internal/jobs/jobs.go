@@ -29,6 +29,7 @@ type Job struct {
  Status string `json:"status"`
  Model string `json:"model"`
  RemoteID string `json:"remote_id,omitempty"`
+ ProviderID string `json:"provider_id,omitempty"`
  IdempotencyKey string `json:"idempotency_key,omitempty"`
  Result *Result `json:"result,omitempty"`
  Error string `json:"error,omitempty"`
@@ -52,6 +53,10 @@ type IdempotentProvider interface {
 // ModelRecoverer resumes a remote job using its persisted model route.
 type ModelIdempotentProvider interface {
  GenerateIdempotent(context.Context,Request,string,func(string)error)(Result,error)
+}
+type ProviderIdentity interface {
+ IdentityFor(string)(string,error)
+ ResumeForIdentity(context.Context,string,string,string)(Result,error)
 }
 type ModelRecoverer interface {
  ResumeFor(context.Context,string,string)(Result,error)
@@ -82,10 +87,11 @@ func (m *Manager) AttachStore(store Store) error {
  now:=time.Now().UTC()
  recoverable,canResume:=m.provider.(RecoverableProvider)
  modelRecoverer,canResumeModel:=m.provider.(ModelRecoverer)
+ identityRecoverer,hasIdentity:=m.provider.(ProviderIdentity)
  canResume=canResume || canResumeModel
  for _,job:=range existing{
   if job.Status=="queued" || job.Status=="running"{
-   if !canResume || job.RemoteID==""{
+   if !canResume || job.RemoteID=="" || (hasIdentity && job.ProviderID==""){
     job.Status="failed"
     job.Error="remote job ID unavailable after restart; not resubmitted"
     job.UpdatedAt=now
@@ -103,7 +109,9 @@ func (m *Manager) AttachStore(store Store) error {
     case m.slots<-struct{}{}:
      ctx,cancel:=context.WithTimeout(context.Background(),m.timeout)
      m.cancel[id]=cancel
-     if canResumeModel {
+     if hasIdentity {
+      go m.resumeIdentity(ctx,id,job.Model,job.ProviderID,job.RemoteID,identityRecoverer)
+     }else if canResumeModel {
       go m.resumeModel(ctx,id,job.Model,job.RemoteID,modelRecoverer)
      } else {
       go m.resume(ctx,id,job.RemoteID,recoverable)
@@ -118,6 +126,23 @@ func (m *Manager) AttachStore(store Store) error {
   }
  }
  return nil
+}
+func(m *Manager) resumeIdentity(ctx context.Context,id,model,providerID,remoteID string,p ProviderIdentity){
+ defer func(){<-m.slots}()
+ result,err:=p.ResumeForIdentity(ctx,model,providerID,remoteID)
+ m.mu.Lock()
+ defer m.mu.Unlock()
+ job:=m.jobs[id]
+ if job.Status!="cancelled"{
+  if err!=nil || ctx.Err()!=nil{job.Status="failed";job.Error="provider identity mismatch or recovery failed"
+  }else{job.Status="completed";job.Result=&result}
+  job.UpdatedAt=time.Now().UTC()
+  if m.store!=nil{
+   if saveErr:=m.store.Save(*job);saveErr!=nil{job.Status="failed";job.Error="job storage failure";job.Result=nil}
+  }
+ }
+ m.cancel[id]()
+ delete(m.cancel,id)
 }
 func(m *Manager) resumeModel(ctx context.Context,id,model,remoteID string,p ModelRecoverer){
  defer func(){<-m.slots}()
@@ -195,6 +220,11 @@ func (m *Manager) Submit(req Request) (Job,error) {
  id:=hex.EncodeToString(bytes[:])
  now:=time.Now().UTC()
  job:=&Job{ID:id,Status:"queued",Model:req.Model,IdempotencyKey:id,CreatedAt:now,UpdatedAt:now}
+ if identity,ok:=m.provider.(ProviderIdentity);ok {
+  providerID,err:=identity.IdentityFor(req.Model)
+  if err!=nil {<-m.slots;return Job{},ErrUnavailable}
+  job.ProviderID=providerID
+ }
  ctx,cancel:=context.WithTimeout(context.Background(),m.timeout)
  m.jobs[id]=job
  m.cancel[id]=cancel
