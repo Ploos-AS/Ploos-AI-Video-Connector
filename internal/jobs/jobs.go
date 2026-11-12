@@ -247,6 +247,15 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
  m.cancel[id]()
  delete(m.cancel,id)
 }
+type ModelInfo struct{
+ ID string `json:"id"`
+ Provider string `json:"provider"`
+ Local bool `json:"local"`
+}
+func(m *Manager) Models()[]ModelInfo{
+ if p,ok:=m.provider.(interface{Models() []ModelInfo});ok{return p.Models()}
+ return []ModelInfo{}
+}
 func (m *Manager) Get(id string) (Job,error) {
  m.mu.Lock();defer m.mu.Unlock()
  job,ok:=m.jobs[id];if !ok {return Job{},ErrNotFound}
