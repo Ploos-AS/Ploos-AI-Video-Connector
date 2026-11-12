@@ -237,7 +237,10 @@ func main(){
    if _,err:=manager.Prune(time.Now().UTC().Add(-7*24*time.Hour));err!=nil {log.Printf("video job pruning failed: %v",err)}
   }
  }()
- srv:=&http.Server{Addr:*address,Handler:handlerWithJobs(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator,manager),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
+ mux:=http.NewServeMux()
+ mux.Handle("/metrics",metricsHandler(token,manager))
+ mux.Handle("/",handlerWithJobs(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator,manager))
+ srv:=&http.Server{Addr:*address,Handler:mux,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
  fmt.Fprintf(os.Stderr,"stateless diagnostic MCP HTTP listening on %s\n",*address)
  log.Fatal(srv.ListenAndServe())
 }
