@@ -4,6 +4,7 @@
 package main
 
 import (
+ "context"
  "crypto/subtle"
  "crypto/sha256"
  "encoding/hex"
@@ -123,7 +124,7 @@ func handlerWithJobs(token, resource, issuer string, validator *introspector, ma
     "name":"video_capabilities",
     "description":"Report connector capabilities without paid calls",
     "inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false},
-   },map[string]any{"name":"video_models","description":"List explicitly configured video models and providers without making paid calls","inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false}},map[string]any{"name":"video_create","description":"Create a video job (requires configured provider)","inputSchema":map[string]any{"type":"object","properties":map[string]any{"model":map[string]any{"type":"string"},"prompt":map[string]any{"type":"string"}},"required":[]string{"model","prompt"}}},map[string]any{"name":"video_status","description":"Get video job status and result","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}},map[string]any{"name":"video_cancel","description":"Cancel video job","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}}}})
+   },map[string]any{"name":"video_models","description":"List explicitly configured video models and providers without making paid calls","inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false}},map[string]any{"name":"video_providers","description":"Check configured private video provider health without generating videos","inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false}},map[string]any{"name":"video_create","description":"Create a video job (requires configured provider)","inputSchema":map[string]any{"type":"object","properties":map[string]any{"model":map[string]any{"type":"string"},"prompt":map[string]any{"type":"string"}},"required":[]string{"model","prompt"}}},map[string]any{"name":"video_status","description":"Get video job status and result","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}},map[string]any{"name":"video_cancel","description":"Cancel video job","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}}}})
   case "tools/call":
    var p struct{
     Name string `json:"name"`
@@ -133,6 +134,11 @@ func handlerWithJobs(token, resource, issuer string, validator *introspector, ma
    switch p.Name {
    case "video_capabilities":
     response=result(q.ID,map[string]any{"content":[]any{map[string]string{"type":"text","text":"Video job API available; no provider configured."}}})
+   case "video_providers":
+    ctx,cancel:=context.WithTimeout(r.Context(),4*time.Second)
+    statuses:=manager.ProviderHealth(ctx)
+    cancel()
+    response=result(q.ID,map[string]any{"structuredContent":map[string]any{"providers":statuses}})
    case "video_models":
     response=result(q.ID,map[string]any{"structuredContent":map[string]any{"models":manager.Models()}})
    case "video_create":
