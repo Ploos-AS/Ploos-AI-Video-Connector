@@ -57,3 +57,16 @@ func (p *Provider) Generate(ctx context.Context,request jobs.Request)(jobs.Resul
  if err!=nil || u.Scheme!="https" || u.Host=="" || u.User!=nil || u.Fragment!="" || output.MIMEType!="video/mp4"{return jobs.Result{},errors.New("invalid video provider result")}
  return output,nil
 }
+
+ // Health checks the private adapter's GET /health endpoint; it never generates video.
+func(p *Provider) Health(ctx context.Context)error{
+ endpoint:=strings.TrimSuffix(p.endpoint,"/generate")
+ req,err:=http.NewRequestWithContext(ctx,http.MethodGet,endpoint+"/health",nil)
+ if err!=nil{return err}
+ req.Header.Set("Authorization","Bearer "+p.token)
+ res,err:=p.client.Do(req)
+ if err!=nil{return err}
+ defer res.Body.Close()
+ if res.StatusCode!=http.StatusOK{return fmt.Errorf("health HTTP %d",res.StatusCode)}
+ return nil
+}
