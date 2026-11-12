@@ -127,3 +127,16 @@ func(p *Provider) poll(ctx context.Context,remote remoteJob)(jobs.Result,error){
   }
  }
 }
+
+ // Health checks the private adapter's GET /health endpoint; it never generates video.
+func(p *Provider) Health(ctx context.Context)error{
+ endpoint:=strings.TrimSuffix(p.endpoint,"/jobs")
+ req,err:=http.NewRequestWithContext(ctx,http.MethodGet,endpoint+"/health",nil)
+ if err!=nil{return err}
+ req.Header.Set("Authorization","Bearer "+p.token)
+ res,err:=p.client.Do(req)
+ if err!=nil{return err}
+ defer res.Body.Close()
+ if res.StatusCode!=http.StatusOK{return fmt.Errorf("health HTTP %d",res.StatusCode)}
+ return nil
+}
