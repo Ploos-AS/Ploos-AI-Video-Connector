@@ -50,6 +50,9 @@ type IdempotentProvider interface {
  GenerateIdempotent(context.Context, Request, string, func(string)error)(Result,error)
 }
 // ModelRecoverer resumes a remote job using its persisted model route.
+type ModelIdempotentProvider interface {
+ GenerateIdempotent(context.Context,Request,string,func(string)error)(Result,error)
+}
 type ModelRecoverer interface {
  ResumeFor(context.Context,string,string)(Result,error)
 }
@@ -216,7 +219,9 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
  m.mu.Unlock()
  var result Result
  var err error
- if p,ok:=m.provider.(IdempotentProvider);ok{
+ if p,ok:=m.provider.(ModelIdempotentProvider);ok{
+  result,err=p.GenerateIdempotent(ctx,req,id,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
+ }else if p,ok:=m.provider.(IdempotentProvider);ok{
   result,err=p.GenerateIdempotent(ctx,req,id,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
  }else if p,ok:=m.provider.(RecoverableProvider);ok{
   result,err=p.GenerateTracked(ctx,req,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
