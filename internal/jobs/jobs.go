@@ -28,6 +28,7 @@ type Job struct {
  ID string `json:"id"`
  Status string `json:"status"`
  Model string `json:"model"`
+ RemoteID string `json:"remote_id,omitempty"`
  Result *Result `json:"result,omitempty"`
  Error string `json:"error,omitempty"`
  CreatedAt time.Time `json:"created_at"`
@@ -35,6 +36,12 @@ type Job struct {
 }
 type Provider interface {
  Generate(context.Context, Request) (Result,error)
+}
+// RecoverableProvider can resume polling a known remote job without submitting it again.
+type RecoverableProvider interface {
+ Provider
+ GenerateTracked(context.Context, Request, func(string) error) (Result,error)
+ Resume(context.Context,string) (Result,error)
 }
 type Manager struct {
  mu sync.Mutex
@@ -50,8 +57,7 @@ func New(provider Provider, concurrency, maxJobs int, timeout time.Duration) (*M
  if concurrency<1 || maxJobs<1 || timeout<=0 {return nil,ErrInvalid}
  return &Manager{jobs:make(map[string]*Job),cancel:make(map[string]context.CancelFunc),provider:provider,slots:make(chan struct{},concurrency),timeout:timeout,maxJobs:maxJobs},nil
 }
-// AttachStore loads persisted jobs and marks interrupted work as failed.
-// Reconciliation of remote provider jobs is not yet supported.
+// AttachStore recovers known remote jobs without re-submitting paid work.
 func (m *Manager) AttachStore(store Store) error {
  if store==nil{return ErrInvalid}
  if _,err:=store.Prune(time.Now().UTC().Add(-7*24*time.Hour));err!=nil{return err}
@@ -61,17 +67,68 @@ func (m *Manager) AttachStore(store Store) error {
  defer m.mu.Unlock()
  if len(m.jobs)!=0{return ErrInvalid}
  now:=time.Now().UTC()
+ recoverable,canResume:=m.provider.(RecoverableProvider)
  for _,job:=range existing{
   if job.Status=="queued" || job.Status=="running"{
-   job.Status="failed"
-   job.Error="connector restarted before job completed"
-   job.UpdatedAt=now
-   if err:=store.Save(job);err!=nil{return err}
+   if !canResume || job.RemoteID==""{
+    job.Status="failed"
+    job.Error="remote job ID unavailable after restart; not resubmitted"
+    job.UpdatedAt=now
+    if err:=store.Save(job);err!=nil{return err}
+   }
   }
   copy:=job
   m.jobs[job.ID]=&copy
  }
  m.store=store
+ if canResume {
+  for id,job:=range m.jobs {
+   if (job.Status=="queued" || job.Status=="running") && job.RemoteID!=""{
+    select{
+    case m.slots<-struct{}{}:
+     ctx,cancel:=context.WithTimeout(context.Background(),m.timeout)
+     m.cancel[id]=cancel
+     go m.resume(ctx,id,job.RemoteID,recoverable)
+    default:
+     job.Status="failed"
+     job.Error="recovery capacity exceeded; remote job not resubmitted"
+     job.UpdatedAt=now
+     if err:=store.Save(*job);err!=nil{return err}
+    }
+   }
+  }
+ }
+ return nil
+}
+func(m *Manager) resume(ctx context.Context,id,remoteID string,p RecoverableProvider){
+ defer func(){<-m.slots}()
+ result,err:=p.Resume(ctx,remoteID)
+ m.mu.Lock()
+ defer m.mu.Unlock()
+ job:=m.jobs[id]
+ if job.Status!="cancelled"{
+  if err!=nil || ctx.Err()!=nil{job.Status="failed";job.Error="remote recovery failed"
+  }else{job.Status="completed";job.Result=&result}
+  job.UpdatedAt=time.Now().UTC()
+  if m.store!=nil{
+   if saveErr:=m.store.Save(*job);saveErr!=nil{job.Status="failed";job.Error="job storage failure";job.Result=nil}
+  }
+ }
+ m.cancel[id]()
+ delete(m.cancel,id)
+}
+func(m *Manager) recordRemoteID(id,remoteID string)error{
+ m.mu.Lock()
+ defer m.mu.Unlock()
+ job,ok:=m.jobs[id]
+ if !ok || job.Status=="cancelled" || remoteID=="" {return ErrInvalid}
+ copy:=*job
+ copy.RemoteID=remoteID
+ copy.UpdatedAt=time.Now().UTC()
+ if m.store!=nil {
+  if err:=m.store.Save(copy);err!=nil{return ErrStorage}
+ }
+ *job=copy
  return nil
 }
 func (m *Manager) Submit(req Request) (Job,error) {
@@ -124,7 +181,13 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
   }
  }
  m.mu.Unlock()
- result,err:=m.provider.Generate(ctx,req)
+ var result Result
+ var err error
+ if p,ok:=m.provider.(RecoverableProvider);ok{
+  result,err=p.GenerateTracked(ctx,req,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
+ }else{
+  result,err=m.provider.Generate(ctx,req)
+ }
  m.mu.Lock()
  defer m.mu.Unlock()
  job:=m.jobs[id]

@@ -62,11 +62,31 @@ func(p *Provider) call(ctx context.Context,method,path string,body []byte)(remot
 }
 
 func(p *Provider) Generate(ctx context.Context,request jobs.Request)(jobs.Result,error){
+ return p.GenerateTracked(ctx,request,func(string)error{return nil})
+}
+func(p *Provider) GenerateTracked(ctx context.Context,request jobs.Request,record func(string)error)(jobs.Result,error){
  body,err:=json.Marshal(request)
  if err!=nil{return jobs.Result{},err}
  remote,err:=p.call(ctx,http.MethodPost,"",body)
  if err!=nil{return jobs.Result{},err}
- // Cancellation is best-effort: do not block the caller on an unreachable provider.
+ // If persistence fails, cancel the remote job instead of risking an untracked charge.
+ if strings.ContainsAny(remote.ID,"/?#") {return jobs.Result{},errors.New("unsafe remote job ID")}
+ if err:=record(remote.ID);err!=nil{
+  cancelCtx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
+  defer cancel()
+  _,_=p.call(cancelCtx,http.MethodDelete,"/"+url.PathEscape(remote.ID),nil)
+  return jobs.Result{},err
+ }
+ return p.poll(ctx,remote)
+}
+func(p *Provider) Resume(ctx context.Context,remoteID string)(jobs.Result,error){
+ if remoteID=="" || len(remoteID)>128 || strings.ContainsAny(remoteID,"/?#"){return jobs.Result{},errors.New("invalid remote job ID")}
+ remote,err:=p.call(ctx,http.MethodGet,"/"+url.PathEscape(remoteID),nil)
+ if err!=nil{return jobs.Result{},err}
+ if remote.ID!=remoteID{return jobs.Result{},errors.New("remote job ID mismatch")}
+ return p.poll(ctx,remote)
+}
+func(p *Provider) poll(ctx context.Context,remote remoteJob)(jobs.Result,error){
  defer func(){
   if ctx.Err()==nil{return}
   cancelCtx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
@@ -88,8 +108,10 @@ func(p *Provider) Generate(ctx context.Context,request jobs.Request)(jobs.Result
   select{
   case <-ctx.Done():return jobs.Result{},ctx.Err()
   case <-ticker.C:
-   remote,err=p.call(ctx,http.MethodGet,"/"+url.PathEscape(remote.ID),nil)
+   next,err:=p.call(ctx,http.MethodGet,"/"+url.PathEscape(remote.ID),nil)
    if err!=nil{return jobs.Result{},err}
+   if next.ID!=remote.ID{return jobs.Result{},errors.New("remote job ID changed")}
+   remote=next
   }
  }
 }
