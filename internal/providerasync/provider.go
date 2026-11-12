@@ -70,6 +70,7 @@ func(p *Provider) GenerateTracked(ctx context.Context,request jobs.Request,recor
  remote,err:=p.call(ctx,http.MethodPost,"",body)
  if err!=nil{return jobs.Result{},err}
  // If persistence fails, cancel the remote job instead of risking an untracked charge.
+ if strings.ContainsAny(remote.ID,"/?#") {return jobs.Result{},errors.New("unsafe remote job ID")}
  if err:=record(remote.ID);err!=nil{
   cancelCtx,cancel:=context.WithTimeout(context.Background(),2*time.Second)
   defer cancel()
