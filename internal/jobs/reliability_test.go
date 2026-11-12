@@ -51,6 +51,6 @@ func TestPeriodicPrune(t *testing.T){
  removed,err:=m.Prune(time.Now().UTC().Add(-24*time.Hour))
  if err!=nil{t.Fatal(err)}
  // AttachStore marks interrupted jobs failed with a fresh timestamp.
- if removed!=0{t.Fatalf("unexpected removal %d",removed)}
+ if removed!=1{t.Fatalf("expected one expired terminal job, removed %d",removed)}
  if _,err=m.Get("done");!errors.Is(err,ErrNotFound){t.Fatal("expired completed job should be pruned at startup")}
 }
