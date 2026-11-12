@@ -1,0 +1,26 @@
+groups:
+  - name: ploos-video-connector
+    rules:
+      # Only alert on known configured providers; absence of metrics needs separate monitoring.
+      - alert: PloosVideoProviderUnavailable
+        expr: ploos_video_provider_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ploos video provider unavailable: {{ $labels.provider }}"
+          description: "The private provider health endpoint has failed for at least five minutes."
+      - alert: PloosVideoProviderSlow
+        expr: ploos_video_provider_latency_seconds > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ploos video provider slow: {{ $labels.provider }}"
+      - alert: PloosVideoMetricsMissing
+        expr: up{job="ploos-video-connector"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ploos video connector metrics scrape failed"
