@@ -49,6 +49,13 @@ type IdempotentProvider interface {
  RecoverableProvider
  GenerateIdempotent(context.Context, Request, string, func(string)error)(Result,error)
 }
+// ModelRecoverer resumes a remote job using its persisted model route.
+type ModelIdempotentProvider interface {
+ GenerateIdempotent(context.Context,Request,string,func(string)error)(Result,error)
+}
+type ModelRecoverer interface {
+ ResumeFor(context.Context,string,string)(Result,error)
+}
 type Manager struct {
  mu sync.Mutex
  jobs map[string]*Job
@@ -74,6 +81,8 @@ func (m *Manager) AttachStore(store Store) error {
  if len(m.jobs)!=0{return ErrInvalid}
  now:=time.Now().UTC()
  recoverable,canResume:=m.provider.(RecoverableProvider)
+ modelRecoverer,canResumeModel:=m.provider.(ModelRecoverer)
+ canResume=canResume || canResumeModel
  for _,job:=range existing{
   if job.Status=="queued" || job.Status=="running"{
    if !canResume || job.RemoteID==""{
@@ -94,7 +103,11 @@ func (m *Manager) AttachStore(store Store) error {
     case m.slots<-struct{}{}:
      ctx,cancel:=context.WithTimeout(context.Background(),m.timeout)
      m.cancel[id]=cancel
-     go m.resume(ctx,id,job.RemoteID,recoverable)
+     if canResumeModel {
+      go m.resumeModel(ctx,id,job.Model,job.RemoteID,modelRecoverer)
+     } else {
+      go m.resume(ctx,id,job.RemoteID,recoverable)
+     }
     default:
      job.Status="failed"
      job.Error="recovery capacity exceeded; remote job not resubmitted"
@@ -105,6 +118,23 @@ func (m *Manager) AttachStore(store Store) error {
   }
  }
  return nil
+}
+func(m *Manager) resumeModel(ctx context.Context,id,model,remoteID string,p ModelRecoverer){
+ defer func(){<-m.slots}()
+ result,err:=p.ResumeFor(ctx,model,remoteID)
+ m.mu.Lock()
+ defer m.mu.Unlock()
+ job:=m.jobs[id]
+ if job.Status!="cancelled"{
+  if err!=nil || ctx.Err()!=nil{job.Status="failed";job.Error="remote recovery failed"
+  }else{job.Status="completed";job.Result=&result}
+  job.UpdatedAt=time.Now().UTC()
+  if m.store!=nil{
+   if saveErr:=m.store.Save(*job);saveErr!=nil{job.Status="failed";job.Error="job storage failure";job.Result=nil}
+  }
+ }
+ m.cancel[id]()
+ delete(m.cancel,id)
 }
 func(m *Manager) resume(ctx context.Context,id,remoteID string,p RecoverableProvider){
  defer func(){<-m.slots}()
@@ -140,6 +170,9 @@ func(m *Manager) recordRemoteID(id,remoteID string)error{
 func (m *Manager) Submit(req Request) (Job,error) {
  if req.Model=="" || req.Prompt=="" || len(req.Prompt)>4096 || len(req.Model)>128 {return Job{},ErrInvalid}
  if m.provider==nil {return Job{},ErrUnavailable}
+ if catalog,ok:=m.provider.(interface{ProviderFor(string)(Provider,error)});ok {
+  if _,err:=catalog.ProviderFor(req.Model);err!=nil{return Job{},ErrUnavailable}
+ }
  m.mu.Lock()
  defer m.mu.Unlock()
  if len(m.jobs)>=m.maxJobs {
@@ -189,7 +222,9 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
  m.mu.Unlock()
  var result Result
  var err error
- if p,ok:=m.provider.(IdempotentProvider);ok{
+ if p,ok:=m.provider.(ModelIdempotentProvider);ok{
+  result,err=p.GenerateIdempotent(ctx,req,id,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
+ }else if p,ok:=m.provider.(IdempotentProvider);ok{
   result,err=p.GenerateIdempotent(ctx,req,id,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
  }else if p,ok:=m.provider.(RecoverableProvider);ok{
   result,err=p.GenerateTracked(ctx,req,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
@@ -214,6 +249,15 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
  }
  m.cancel[id]()
  delete(m.cancel,id)
+}
+type ModelInfo struct{
+ ID string `json:"id"`
+ Provider string `json:"provider"`
+ Local bool `json:"local"`
+}
+func(m *Manager) Models()[]ModelInfo{
+ if p,ok:=m.provider.(interface{Models() []ModelInfo});ok{return p.Models()}
+ return []ModelInfo{}
 }
 func (m *Manager) Get(id string) (Job,error) {
  m.mu.Lock();defer m.mu.Unlock()

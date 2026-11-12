@@ -70,7 +70,13 @@ func TestMCPHTTPIntegrationWithOAuth(t *testing.T) {
   result,ok:=data["result"].(map[string]any)
   if !ok {t.Fatalf("result=%v",data)}
   tools,ok:=result["tools"].([]any)
-  if !ok || len(tools)!=4 {t.Fatalf("tools=%v",result)}
+  if !ok || len(tools)!=5 {t.Fatalf("tools=%v",result)}
+  found:=false
+  for _,tool:=range tools{
+   item,ok:=tool.(map[string]any)
+   if ok && item["name"]=="video_models"{found=true}
+  }
+  if !found {t.Fatal("video_models tool missing")}
  })
  t.Run("call-tool",func(t *testing.T){
   status,_,data:=send("POST","/mcp",`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"video_capabilities","arguments":{}}}`,token)

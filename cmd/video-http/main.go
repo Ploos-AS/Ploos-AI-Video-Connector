@@ -9,6 +9,7 @@ import (
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerhttp"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerasync"
+ "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerregistry"
  "encoding/json"
  "flag"
  "fmt"
@@ -120,7 +121,7 @@ func handlerWithJobs(token, resource, issuer string, validator *introspector, ma
     "name":"video_capabilities",
     "description":"Report connector capabilities without paid calls",
     "inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false},
-   },map[string]any{"name":"video_create","description":"Create a video job (requires configured provider)","inputSchema":map[string]any{"type":"object","properties":map[string]any{"model":map[string]any{"type":"string"},"prompt":map[string]any{"type":"string"}},"required":[]string{"model","prompt"}}},map[string]any{"name":"video_status","description":"Get video job status and result","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}},map[string]any{"name":"video_cancel","description":"Cancel video job","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}}}})
+   },map[string]any{"name":"video_models","description":"List explicitly configured video models and providers without making paid calls","inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false}},map[string]any{"name":"video_create","description":"Create a video job (requires configured provider)","inputSchema":map[string]any{"type":"object","properties":map[string]any{"model":map[string]any{"type":"string"},"prompt":map[string]any{"type":"string"}},"required":[]string{"model","prompt"}}},map[string]any{"name":"video_status","description":"Get video job status and result","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}},map[string]any{"name":"video_cancel","description":"Cancel video job","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}}}})
   case "tools/call":
    var p struct{
     Name string `json:"name"`
@@ -130,6 +131,8 @@ func handlerWithJobs(token, resource, issuer string, validator *introspector, ma
    switch p.Name {
    case "video_capabilities":
     response=result(q.ID,map[string]any{"content":[]any{map[string]string{"type":"text","text":"Video job API available; no provider configured."}}})
+   case "video_models":
+    response=result(q.ID,map[string]any{"structuredContent":map[string]any{"models":manager.Models()}})
    case "video_create":
     var args jobs.Request
     if json.Unmarshal(p.Arguments,&args)!=nil {response=rpcError(q.ID,-32602,"invalid arguments");break}
@@ -170,9 +173,36 @@ func main(){
   if err!=nil {log.Fatal(err)}
  } else if len(token)<32 {log.Fatal("PLOOS_MCP_BEARER_TOKEN must contain at least 32 characters")}
  var provider jobs.Provider
+ if raw:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_PROVIDERS_JSON"));raw!=""{
+  var configs []struct{
+   Name string `json:"name"`
+   Kind string `json:"kind"`
+   Endpoint string `json:"endpoint"`
+   TokenEnv string `json:"token_env"`
+   Models []string `json:"models"`
+   Local bool `json:"local"`
+  }
+  if err:=json.Unmarshal([]byte(raw),&configs);err!=nil || len(configs)==0{log.Fatal("invalid PLOOS_VIDEO_PROVIDERS_JSON")}
+  entries:=make([]providerregistry.Entry,0,len(configs))
+  for _,c:=range configs{
+   if c.TokenEnv=="" || !strings.HasPrefix(c.TokenEnv,"PLOOS_"){log.Fatal("provider token_env must reference a PLOOS_ environment variable")}
+   var p jobs.Provider
+   var err error
+   switch c.Kind{
+   case "async":p,err=providerasync.New(c.Endpoint,os.Getenv(c.TokenEnv),2*time.Second)
+   case "http":p,err=providerhttp.New(c.Endpoint,os.Getenv(c.TokenEnv))
+   default:log.Fatal("unknown video provider kind")
+   }
+   if err!=nil{log.Fatal(err)}
+   entries=append(entries,providerregistry.Entry{Name:c.Name,Models:c.Models,Local:c.Local,Provider:p})
+  }
+  registry,err:=providerregistry.New(entries)
+  if err!=nil{log.Fatal(err)}
+  provider=registry
+ }
  asyncEndpoint:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_ASYNC_ENDPOINT"))
  httpEndpoint:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_HTTP_ENDPOINT"))
- if asyncEndpoint!="" && httpEndpoint!="" {log.Fatal("configure only one video provider")}
+ if (asyncEndpoint!="" && httpEndpoint!="") || (provider!=nil && (asyncEndpoint!="" || httpEndpoint!="")) {log.Fatal("configure either registry or one legacy video provider")}
  if asyncEndpoint!="" {
   var err error
   provider,err=providerasync.New(asyncEndpoint,os.Getenv("PLOOS_VIDEO_ASYNC_TOKEN"),2*time.Second)
