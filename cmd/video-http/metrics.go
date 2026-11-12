@@ -7,7 +7,6 @@ import (
  "net/http"
  "strconv"
  "strings"
- "time"
 
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
 )
@@ -46,6 +45,5 @@ func metricsHandler(token string,manager *jobs.Manager)http.Handler{
    fmt.Fprintf(w,"ploos_video_provider_up{provider=%s} %d\n",name,up)
    fmt.Fprintf(w,"ploos_video_provider_latency_seconds{provider=%s} %.3f\n",name,float64(p.LatencyMS)/1000)
   }
-  _=time.Second
  })
 }
