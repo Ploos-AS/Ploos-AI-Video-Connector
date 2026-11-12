@@ -8,6 +8,7 @@ import (
  "errors"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerhttp"
+ "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerasync"
  "encoding/json"
  "flag"
  "fmt"
@@ -168,7 +169,15 @@ func main(){
   if err!=nil {log.Fatal(err)}
  } else if len(token)<32 {log.Fatal("PLOOS_MCP_BEARER_TOKEN must contain at least 32 characters")}
  var provider jobs.Provider
- if endpoint:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_HTTP_ENDPOINT"));endpoint!="" {
+ asyncEndpoint:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_ASYNC_ENDPOINT"))
+ httpEndpoint:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_HTTP_ENDPOINT"))
+ if asyncEndpoint!="" && httpEndpoint!="" {log.Fatal("configure only one video provider")}
+ if asyncEndpoint!="" {
+  var err error
+  provider,err=providerasync.New(asyncEndpoint,os.Getenv("PLOOS_VIDEO_ASYNC_TOKEN"),2*time.Second)
+  if err!=nil {log.Fatal(err)}
+ }
+ if endpoint:=httpEndpoint;endpoint!="" {
   var err error
   provider,err=providerhttp.New(endpoint,os.Getenv("PLOOS_VIDEO_HTTP_TOKEN"))
   if err!=nil {log.Fatal(err)}
