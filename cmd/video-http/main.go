@@ -7,6 +7,7 @@ import (
  "crypto/subtle"
  "errors"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
+ "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerhttp"
  "encoding/json"
  "flag"
  "fmt"
@@ -166,7 +167,15 @@ func main(){
   validator,err=newIntrospector(endpoint,os.Getenv("PLOOS_OAUTH_CLIENT_ID"),os.Getenv("PLOOS_OAUTH_CLIENT_SECRET"),os.Getenv("PLOOS_OAUTH_ISSUER"),os.Getenv("PLOOS_MCP_PUBLIC_URL"),os.Getenv("PLOOS_OAUTH_REQUIRED_SCOPE"))
   if err!=nil {log.Fatal(err)}
  } else if len(token)<32 {log.Fatal("PLOOS_MCP_BEARER_TOKEN must contain at least 32 characters")}
- srv:=&http.Server{Addr:*address,Handler:handlerWithValidator(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
+ var provider jobs.Provider
+ if endpoint:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_HTTP_ENDPOINT"));endpoint!="" {
+  var err error
+  provider,err=providerhttp.New(endpoint,os.Getenv("PLOOS_VIDEO_HTTP_TOKEN"))
+  if err!=nil {log.Fatal(err)}
+ }
+ manager,err:=jobs.New(provider,2,100,2*time.Minute)
+ if err!=nil {log.Fatal(err)}
+ srv:=&http.Server{Addr:*address,Handler:handlerWithJobs(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator,manager),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
  fmt.Fprintf(os.Stderr,"stateless diagnostic MCP HTTP listening on %s\n",*address)
  log.Fatal(srv.ListenAndServe())
 }
