@@ -1,0 +1,19 @@
+# Example scrape job to merge under scrape_configs in Prometheus.
+# The application /metrics endpoint rejects non-loopback clients, even over WireGuard.
+# Run this collector on the SAME HOST as video-http or through a loopback SSH tunnel.
+# Never publish /metrics via a public Caddy route.
+#
+# Supply a protected file containing ONLY the bearer token, without the 'Bearer ' prefix.
+# Prometheus adds the Authorization: Bearer header automatically.
+- job_name: ploos-video-connector
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  metrics_path: /metrics
+  scheme: http
+  static_configs:
+    - targets: ['127.0.0.1:8787']
+      labels:
+        service: ploos-ai-video-connector
+  authorization:
+    type: Bearer
+    credentials_file: /etc/prometheus/secrets/ploos-video-metrics-token
