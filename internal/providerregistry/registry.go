@@ -20,16 +20,11 @@ type Entry struct{
  Provider jobs.Provider `json:"-"`
 }
 
-type Model struct{
- ID string `json:"id"`
- Provider string `json:"provider"`
- Local bool `json:"local"`
-}
 
 type Registry struct{
  providers map[string]Entry
  routes map[string]string
- models []Model
+ models []jobs.ModelInfo
 }
 
 func New(entries []Entry)(*Registry,error){
@@ -42,13 +37,13 @@ func New(entries []Entry)(*Registry,error){
    if model=="" || strings.TrimSpace(model)!=model || len(model)>128{return nil,ErrConfiguration}
    if _,exists:=r.routes[model];exists{return nil,ErrConfiguration}
    r.routes[model]=e.Name
-   r.models=append(r.models,Model{ID:model,Provider:e.Name,Local:e.Local})
+   r.models=append(r.models,jobs.ModelInfo{ID:model,Provider:e.Name,Local:e.Local})
   }
  }
  sort.Slice(r.models,func(i,j int)bool{return r.models[i].ID<r.models[j].ID})
  return r,nil
 }
-func(r *Registry)Models()[]Model{return append([]Model(nil),r.models...)}
+func(r *Registry)Models()[]jobs.ModelInfo{return append([]jobs.ModelInfo(nil),r.models...)}
 func(r *Registry)ProviderFor(model string)(jobs.Provider,error){
  name,ok:=r.routes[model]
  if !ok{return nil,jobs.ErrUnavailable}
