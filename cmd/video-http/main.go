@@ -5,7 +5,6 @@ package main
 
 import (
  "crypto/subtle"
- "context"
  "errors"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
  "encoding/json"
