@@ -5,6 +5,9 @@ package main
 
 import (
  "crypto/subtle"
+ "context"
+ "errors"
+ "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
  "encoding/json"
  "flag"
  "fmt"
@@ -42,6 +45,10 @@ func handlerWithOAuthMetadata(token, resource, issuer string) http.Handler {
  return handlerWithValidator(token, resource, issuer, nil)
 }
 func handlerWithValidator(token, resource, issuer string, validator *introspector) http.Handler {
+ manager,_:=jobs.New(nil,2,100,5*time.Minute)
+ return handlerWithJobs(token,resource,issuer,validator,manager)
+}
+func handlerWithJobs(token, resource, issuer string, validator *introspector, manager *jobs.Manager) http.Handler {
  metadataEnabled := validHTTPS(resource) && validHTTPS(issuer)
  return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   if r.URL.Path=="/.well-known/oauth-protected-resource" {
@@ -112,13 +119,34 @@ func handlerWithValidator(token, resource, issuer string, validator *introspecto
     "name":"video_capabilities",
     "description":"Report connector capabilities without paid calls",
     "inputSchema":map[string]any{"type":"object","properties":map[string]any{},"additionalProperties":false},
-   }}})
+   },map[string]any{"name":"video_create","description":"Create a video job (requires configured provider)","inputSchema":map[string]any{"type":"object","properties":map[string]any{"model":map[string]any{"type":"string"},"prompt":map[string]any{"type":"string"}},"required":[]string{"model","prompt"}}},map[string]any{"name":"video_status","description":"Get video job status and result","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}},map[string]any{"name":"video_cancel","description":"Cancel video job","inputSchema":map[string]any{"type":"object","properties":map[string]any{"id":map[string]any{"type":"string"}},"required":[]string{"id"}}}}})
   case "tools/call":
-   var p struct{Name string `json:"name"`}
+   var p struct{
+    Name string `json:"name"`
+    Arguments json.RawMessage `json:"arguments"`
+   }
    _=json.Unmarshal(q.Params,&p)
-   if p.Name=="video_capabilities" {
-    response=result(q.ID,map[string]any{"content":[]any{map[string]string{"type":"text","text":"Diagnostic only: no video providers configured."}}})
-   }else{response=rpcError(q.ID,-32602,"unknown tool")}
+   switch p.Name {
+   case "video_capabilities":
+    response=result(q.ID,map[string]any{"content":[]any{map[string]string{"type":"text","text":"Video job API available; no provider configured."}}})
+   case "video_create":
+    var args jobs.Request
+    if json.Unmarshal(p.Arguments,&args)!=nil {response=rpcError(q.ID,-32602,"invalid arguments");break}
+    job,err:=manager.Submit(args)
+    if err!=nil {
+     if errors.Is(err,jobs.ErrUnavailable){response=rpcError(q.ID,-32001,"video provider unavailable")
+     }else if errors.Is(err,jobs.ErrBusy){response=rpcError(q.ID,-32002,"video job capacity reached")
+     }else{response=rpcError(q.ID,-32602,"invalid video request")}
+    }else{response=result(q.ID,map[string]any{"structuredContent":job})}
+   case "video_status","video_cancel":
+    var args struct{ID string `json:"id"`}
+    if json.Unmarshal(p.Arguments,&args)!=nil || args.ID=="" {response=rpcError(q.ID,-32602,"invalid job id");break}
+    var job jobs.Job
+    var err error
+    if p.Name=="video_cancel"{job,err=manager.Cancel(args.ID)}else{job,err=manager.Get(args.ID)}
+    if err!=nil {response=rpcError(q.ID,-32602,"job not found")}else{response=result(q.ID,map[string]any{"structuredContent":job})}
+   default:response=rpcError(q.ID,-32602,"unknown tool")
+   }
   default:response=rpcError(q.ID,-32601,"method not found")
   }
   w.Header().Set("Content-Type","application/json")
