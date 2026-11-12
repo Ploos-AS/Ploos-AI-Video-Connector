@@ -159,3 +159,19 @@ func (m *Manager) Cancel(id string) (Job,error) {
  }
  return *job,nil
 }
+
+func(m *Manager) Prune(before time.Time)(int64,error){
+ m.mu.Lock()
+ defer m.mu.Unlock()
+ if m.store!=nil {
+  if _,err:=m.store.Prune(before);err!=nil{return 0,ErrStorage}
+ }
+ var removed int64
+ for id,job:=range m.jobs {
+  if (job.Status=="completed" || job.Status=="failed" || job.Status=="cancelled") && job.UpdatedAt.Before(before) {
+   delete(m.jobs,id)
+   removed++
+  }
+ }
+ return removed,nil
+}
