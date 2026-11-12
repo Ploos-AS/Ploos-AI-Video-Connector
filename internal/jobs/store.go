@@ -14,6 +14,7 @@ type Store interface {
  Save(Job) error
  Load() ([]Job,error)
  Prune(time.Time) (int64,error)
+ Delete(string) error
  Close() error
 }
 
@@ -53,3 +54,8 @@ func(s *SQLiteStore)Prune(before time.Time)(int64,error){
  return res.RowsAffected()
 }
 func(s *SQLiteStore)Close()error{return s.db.Close()}
+
+func(s *SQLiteStore)Delete(id string)error{
+ _,err:=s.db.Exec("DELETE FROM video_jobs WHERE id = ?",id)
+ return err
+}
