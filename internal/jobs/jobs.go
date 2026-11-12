@@ -170,6 +170,9 @@ func(m *Manager) recordRemoteID(id,remoteID string)error{
 func (m *Manager) Submit(req Request) (Job,error) {
  if req.Model=="" || req.Prompt=="" || len(req.Prompt)>4096 || len(req.Model)>128 {return Job{},ErrInvalid}
  if m.provider==nil {return Job{},ErrUnavailable}
+ if catalog,ok:=m.provider.(interface{ProviderFor(string)(Provider,error)});ok {
+  if _,err:=catalog.ProviderFor(req.Model);err!=nil{return Job{},ErrUnavailable}
+ }
  m.mu.Lock()
  defer m.mu.Unlock()
  if len(m.jobs)>=m.maxJobs {
