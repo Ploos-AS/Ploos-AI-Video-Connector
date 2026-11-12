@@ -70,7 +70,7 @@ func TestMCPHTTPIntegrationWithOAuth(t *testing.T) {
   result,ok:=data["result"].(map[string]any)
   if !ok {t.Fatalf("result=%v",data)}
   tools,ok:=result["tools"].([]any)
-  if !ok || len(tools)!=5 {t.Fatalf("tools=%v",result)}
+  if !ok || len(tools)!=6 {t.Fatalf("tools=%v",result)}
   found:=false
   for _,tool:=range tools{
    item,ok:=tool.(map[string]any)

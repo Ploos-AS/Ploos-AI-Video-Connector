@@ -280,6 +280,16 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
  m.cancel[id]()
  delete(m.cancel,id)
 }
+type ProviderHealth struct{
+ Name string `json:"name"`
+ Status string `json:"status"`
+ LatencyMS int64 `json:"latency_ms"`
+ CheckedAt time.Time `json:"checked_at"`
+}
+func(m *Manager) ProviderHealth(ctx context.Context)[]ProviderHealth{
+ if p,ok:=m.provider.(interface{Health(context.Context)[]ProviderHealth});ok{return p.Health(ctx)}
+ return []ProviderHealth{}
+}
 type ModelInfo struct{
  ID string `json:"id"`
  Provider string `json:"provider"`
