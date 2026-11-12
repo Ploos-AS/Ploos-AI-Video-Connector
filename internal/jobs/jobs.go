@@ -29,6 +29,7 @@ type Job struct {
  Status string `json:"status"`
  Model string `json:"model"`
  RemoteID string `json:"remote_id,omitempty"`
+ IdempotencyKey string `json:"idempotency_key,omitempty"`
  Result *Result `json:"result,omitempty"`
  Error string `json:"error,omitempty"`
  CreatedAt time.Time `json:"created_at"`
@@ -42,6 +43,11 @@ type RecoverableProvider interface {
  Provider
  GenerateTracked(context.Context, Request, func(string) error) (Result,error)
  Resume(context.Context,string) (Result,error)
+}
+// IdempotentProvider supports safe replay with a provider-enforced key.
+type IdempotentProvider interface {
+ RecoverableProvider
+ GenerateIdempotent(context.Context, Request, string, func(string)error)(Result,error)
 }
 type Manager struct {
  mu sync.Mutex
@@ -155,7 +161,7 @@ func (m *Manager) Submit(req Request) (Job,error) {
  if _,err:=rand.Read(bytes[:]);err!=nil {<-m.slots;return Job{},err}
  id:=hex.EncodeToString(bytes[:])
  now:=time.Now().UTC()
- job:=&Job{ID:id,Status:"queued",Model:req.Model,CreatedAt:now,UpdatedAt:now}
+ job:=&Job{ID:id,Status:"queued",Model:req.Model,IdempotencyKey:id,CreatedAt:now,UpdatedAt:now}
  ctx,cancel:=context.WithTimeout(context.Background(),m.timeout)
  m.jobs[id]=job
  m.cancel[id]=cancel
@@ -183,7 +189,9 @@ func (m *Manager) run(ctx context.Context,id string,req Request) {
  m.mu.Unlock()
  var result Result
  var err error
- if p,ok:=m.provider.(RecoverableProvider);ok{
+ if p,ok:=m.provider.(IdempotentProvider);ok{
+  result,err=p.GenerateIdempotent(ctx,req,id,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
+ }else if p,ok:=m.provider.(RecoverableProvider);ok{
   result,err=p.GenerateTracked(ctx,req,func(remoteID string)error{return m.recordRemoteID(id,remoteID)})
  }else{
   result,err=m.provider.Generate(ctx,req)

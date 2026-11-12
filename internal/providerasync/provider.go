@@ -46,9 +46,13 @@ func New(endpoint,token string,interval time.Duration)(*Provider,error){
 }
 
 func(p *Provider) call(ctx context.Context,method,path string,body []byte)(remoteJob,error){
+ return p.callWithKey(ctx,method,path,body,"")
+}
+func(p *Provider) callWithKey(ctx context.Context,method,path string,body []byte,key string)(remoteJob,error){
  req,err:=http.NewRequestWithContext(ctx,method,p.endpoint+path,bytes.NewReader(body))
  if err!=nil{return remoteJob{},err}
  req.Header.Set("Authorization","Bearer "+p.token)
+ if key!="" {req.Header.Set("Idempotency-Key",key)}
  req.Header.Set("Content-Type","application/json")
  res,err:=p.client.Do(req)
  if err!=nil{return remoteJob{},err}
@@ -65,9 +69,17 @@ func(p *Provider) Generate(ctx context.Context,request jobs.Request)(jobs.Result
  return p.GenerateTracked(ctx,request,func(string)error{return nil})
 }
 func(p *Provider) GenerateTracked(ctx context.Context,request jobs.Request,record func(string)error)(jobs.Result,error){
+ return p.generate(ctx,request,"",record)
+}
+func(p *Provider) GenerateIdempotent(ctx context.Context,request jobs.Request,key string,record func(string)error)(jobs.Result,error){
+ if len(key)!=32 {return jobs.Result{},errors.New("invalid idempotency key")}
+ for _,c:=range key {if !((c>='0' && c<='9') || (c>='a' && c<='f')){return jobs.Result{},errors.New("invalid idempotency key")}}
+ return p.generate(ctx,request,key,record)
+}
+func(p *Provider) generate(ctx context.Context,request jobs.Request,key string,record func(string)error)(jobs.Result,error){
  body,err:=json.Marshal(request)
  if err!=nil{return jobs.Result{},err}
- remote,err:=p.call(ctx,http.MethodPost,"",body)
+ remote,err:=p.callWithKey(ctx,http.MethodPost,"",body,key)
  if err!=nil{return jobs.Result{},err}
  // If persistence fails, cancel the remote job instead of risking an untracked charge.
  if strings.ContainsAny(remote.ID,"/?#") {return jobs.Result{},errors.New("unsafe remote job ID")}
