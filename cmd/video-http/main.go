@@ -5,6 +5,8 @@ package main
 
 import (
  "crypto/subtle"
+ "crypto/sha256"
+ "encoding/hex"
  "errors"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/jobs"
  "github.com/Ploos-AS/Ploos-AI-Video-Connector/internal/providerhttp"
@@ -194,7 +196,8 @@ func main(){
    default:log.Fatal("unknown video provider kind")
    }
    if err!=nil{log.Fatal(err)}
-   entries=append(entries,providerregistry.Entry{Name:c.Name,Models:c.Models,Local:c.Local,Provider:p})
+   fingerprint:=sha256.Sum256([]byte(c.Kind+"\x00"+c.Name+"\x00"+c.Endpoint))
+   entries=append(entries,providerregistry.Entry{Name:c.Name,Identity:hex.EncodeToString(fingerprint[:]),Models:c.Models,Local:c.Local,Provider:p})
   }
   registry,err:=providerregistry.New(entries)
   if err!=nil{log.Fatal(err)}
