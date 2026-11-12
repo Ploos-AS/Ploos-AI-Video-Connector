@@ -184,6 +184,12 @@ func main(){
  }
  manager,err:=jobs.New(provider,2,100,2*time.Minute)
  if err!=nil {log.Fatal(err)}
+ if dbPath:=strings.TrimSpace(os.Getenv("PLOOS_VIDEO_SQLITE_PATH"));dbPath!="" {
+  store,err:=jobs.OpenSQLite(dbPath)
+  if err!=nil {log.Fatal(err)}
+  defer store.Close()
+  if err:=manager.AttachStore(store);err!=nil {log.Fatal(err)}
+ }
  srv:=&http.Server{Addr:*address,Handler:handlerWithJobs(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator,manager),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
  fmt.Fprintf(os.Stderr,"stateless diagnostic MCP HTTP listening on %s\n",*address)
  log.Fatal(srv.ListenAndServe())
