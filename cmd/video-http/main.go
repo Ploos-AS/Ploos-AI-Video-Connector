@@ -135,7 +135,8 @@ func handlerWithJobs(token, resource, issuer string, validator *introspector, ma
     if json.Unmarshal(p.Arguments,&args)!=nil {response=rpcError(q.ID,-32602,"invalid arguments");break}
     job,err:=manager.Submit(args)
     if err!=nil {
-     if errors.Is(err,jobs.ErrUnavailable){response=rpcError(q.ID,-32001,"video provider unavailable")
+     if errors.Is(err,jobs.ErrStorage){response=rpcError(q.ID,-32603,"video job storage unavailable")
+     }else if errors.Is(err,jobs.ErrUnavailable){response=rpcError(q.ID,-32001,"video provider unavailable")
      }else if errors.Is(err,jobs.ErrBusy){response=rpcError(q.ID,-32002,"video job capacity reached")
      }else{response=rpcError(q.ID,-32602,"invalid video request")}
     }else{response=result(q.ID,map[string]any{"structuredContent":job})}
@@ -145,7 +146,7 @@ func handlerWithJobs(token, resource, issuer string, validator *introspector, ma
     var job jobs.Job
     var err error
     if p.Name=="video_cancel"{job,err=manager.Cancel(args.ID)}else{job,err=manager.Get(args.ID)}
-    if err!=nil {response=rpcError(q.ID,-32602,"job not found")}else{response=result(q.ID,map[string]any{"structuredContent":job})}
+    if errors.Is(err,jobs.ErrStorage){response=rpcError(q.ID,-32603,"video job storage unavailable")}else if err!=nil {response=rpcError(q.ID,-32602,"job not found")}else{response=result(q.ID,map[string]any{"structuredContent":job})}
    default:response=rpcError(q.ID,-32602,"unknown tool")
    }
   default:response=rpcError(q.ID,-32601,"method not found")
@@ -190,6 +191,13 @@ func main(){
   defer store.Close()
   if err:=manager.AttachStore(store);err!=nil {log.Fatal(err)}
  }
+ go func(){
+  ticker:=time.NewTicker(time.Hour)
+  defer ticker.Stop()
+  for range ticker.C {
+   if _,err:=manager.Prune(time.Now().UTC().Add(-7*24*time.Hour));err!=nil {log.Printf("video job pruning failed: %v",err)}
+  }
+ }()
  srv:=&http.Server{Addr:*address,Handler:handlerWithJobs(token,strings.TrimSpace(os.Getenv("PLOOS_MCP_PUBLIC_URL")),strings.TrimSpace(os.Getenv("PLOOS_OAUTH_ISSUER")),validator,manager),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second}
  fmt.Fprintf(os.Stderr,"stateless diagnostic MCP HTTP listening on %s\n",*address)
  log.Fatal(srv.ListenAndServe())
