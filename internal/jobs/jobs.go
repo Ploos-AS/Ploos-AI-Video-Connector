@@ -53,6 +53,7 @@ func New(provider Provider, concurrency, maxJobs int, timeout time.Duration) (*M
 // Reconciliation of remote provider jobs is not yet supported.
 func (m *Manager) AttachStore(store Store) error {
  if store==nil{return ErrInvalid}
+ if _,err:=store.Prune(time.Now().UTC().Add(-7*24*time.Hour));err!=nil{return err}
  existing,err:=store.Load()
  if err!=nil{return err}
  m.mu.Lock()
