@@ -31,8 +31,9 @@ type Registry struct{
 func New(entries []Entry)(*Registry,error){
  r:=&Registry{providers:make(map[string]Entry),routes:make(map[string]string)}
  for _,e:=range entries{
-  if e.Name=="" || strings.TrimSpace(e.Name)!=e.Name || e.Provider==nil || len(e.Models)==0 || e.Identity==""{return nil,ErrConfiguration}
+  if e.Name=="" || strings.TrimSpace(e.Name)!=e.Name || e.Provider==nil || len(e.Models)==0{return nil,ErrConfiguration}
   if _,exists:=r.providers[e.Name];exists{return nil,ErrConfiguration}
+  if e.Identity==""{e.Identity=e.Name}
   r.providers[e.Name]=e
   for _,model:=range e.Models{
    if model=="" || strings.TrimSpace(model)!=model || len(model)>128{return nil,ErrConfiguration}
