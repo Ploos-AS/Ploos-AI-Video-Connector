@@ -49,6 +49,10 @@ type IdempotentProvider interface {
  RecoverableProvider
  GenerateIdempotent(context.Context, Request, string, func(string)error)(Result,error)
 }
+// ModelRecoverer resumes a remote job using its persisted model route.
+type ModelRecoverer interface {
+ ResumeFor(context.Context,string,string)(Result,error)
+}
 type Manager struct {
  mu sync.Mutex
  jobs map[string]*Job
@@ -74,6 +78,8 @@ func (m *Manager) AttachStore(store Store) error {
  if len(m.jobs)!=0{return ErrInvalid}
  now:=time.Now().UTC()
  recoverable,canResume:=m.provider.(RecoverableProvider)
+ modelRecoverer,canResumeModel:=m.provider.(ModelRecoverer)
+ canResume=canResume || canResumeModel
  for _,job:=range existing{
   if job.Status=="queued" || job.Status=="running"{
    if !canResume || job.RemoteID==""{
@@ -94,7 +100,11 @@ func (m *Manager) AttachStore(store Store) error {
     case m.slots<-struct{}{}:
      ctx,cancel:=context.WithTimeout(context.Background(),m.timeout)
      m.cancel[id]=cancel
-     go m.resume(ctx,id,job.RemoteID,recoverable)
+     if canResumeModel {
+      go m.resumeModel(ctx,id,job.Model,job.RemoteID,modelRecoverer)
+     } else {
+      go m.resume(ctx,id,job.RemoteID,recoverable)
+     }
     default:
      job.Status="failed"
      job.Error="recovery capacity exceeded; remote job not resubmitted"
@@ -105,6 +115,23 @@ func (m *Manager) AttachStore(store Store) error {
   }
  }
  return nil
+}
+func(m *Manager) resumeModel(ctx context.Context,id,model,remoteID string,p ModelRecoverer){
+ defer func(){<-m.slots}()
+ result,err:=p.ResumeFor(ctx,model,remoteID)
+ m.mu.Lock()
+ defer m.mu.Unlock()
+ job:=m.jobs[id]
+ if job.Status!="cancelled"{
+  if err!=nil || ctx.Err()!=nil{job.Status="failed";job.Error="remote recovery failed"
+  }else{job.Status="completed";job.Result=&result}
+  job.UpdatedAt=time.Now().UTC()
+  if m.store!=nil{
+   if saveErr:=m.store.Save(*job);saveErr!=nil{job.Status="failed";job.Error="job storage failure";job.Result=nil}
+  }
+ }
+ m.cancel[id]()
+ delete(m.cancel,id)
 }
 func(m *Manager) resume(ctx context.Context,id,remoteID string,p RecoverableProvider){
  defer func(){<-m.slots}()
